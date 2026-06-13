@@ -22,10 +22,6 @@ import config
 
 EdgeKey = Tuple[int, int, int]
 
-# Operator response labels and their real-time impact on the edge.
-#   capacity_mult   -> multiply the edge's capacity (lower = worse road)
-#   incident_factor -> multiply routing cost (higher = stronger avoidance)
-#   congested_label -> label fed back to the ML model (1 = congested)
 RESPONSE_IMPACT = {
     "Accident": {"capacity_mult": 0.30, "incident_factor": 6.0, "congested_label": 1},
     "Road works": {"capacity_mult": 0.55, "incident_factor": 3.0, "congested_label": 1},
@@ -51,7 +47,7 @@ class Alert:
     time_of_day: int
     day_of_week: int
     created_at: float = field(default_factory=time.time)
-    status: str = "active"          # "active" | "resolved"
+    status: str = "active"
     label: Optional[str] = None
 
     @property
@@ -63,10 +59,8 @@ class AlertSystem:
     def __init__(self):
         self.alerts: List[Alert] = []
         self._next_id = 1
-        # edges that already have an active alert (avoid duplicates)
         self._active_edges: set = set()
 
-    # ------------------------------------------------------------------ #
     def _edge_midpoint(self, G, u, v) -> Tuple[float, float]:
         lat = (G.nodes[u]["y"] + G.nodes[v]["y"]) / 2.0
         lon = (G.nodes[u]["x"] + G.nodes[v]["x"]) / 2.0
@@ -87,7 +81,6 @@ class AlertSystem:
         ``max_new`` worst (by load/predicted ratio) so the operator panel stays
         focused on the severe anomalies.
         """
-        # 1. Collect candidates (edge + ratio) not already alerted.
         candidates = []
         for u, v, k, data in G.edges(keys=True, data=True):
             predicted = data.get("predicted_load", 0.0)
@@ -100,11 +93,9 @@ class AlertSystem:
                 continue
             candidates.append((actual / max(predicted, 1e-6), u, v, k, actual, predicted))
 
-        # 2. Keep the worst ``max_new`` by ratio.
         candidates.sort(key=lambda c: c[0], reverse=True)
         candidates = candidates[:max_new]
 
-        # 3. Materialise alerts.
         new_alerts: List[Alert] = []
         for ratio, u, v, k, actual, predicted in candidates:
             data = G.edges[u, v, k]
@@ -127,7 +118,6 @@ class AlertSystem:
             self._next_id += 1
         return new_alerts
 
-    # ------------------------------------------------------------------ #
     def active_alerts(self) -> List[Alert]:
         return [a for a in self.alerts if a.status == "active"]
 
@@ -153,17 +143,14 @@ class AlertSystem:
         alert.status = "resolved"
         self._active_edges.discard(alert.edge)
 
-        # --- real-time edge update ------------------------------------- #
         if G.has_edge(alert.u, alert.v, alert.key):
             data = G.edges[alert.u, alert.v, alert.key]
             base_cap = data.get("base_capacity", data.get("capacity", 0.3))
             data["capacity"] = float(base_cap * impact["capacity_mult"])
             data["incident"] = label
             data["incident_factor"] = float(impact["incident_factor"])
-            # Reflect the disruption in the live load too.
             data["load"] = float(min(1.0, max(data.get("load", 0.0), 0.85)))
 
-            # --- feedback to the ML model ------------------------------ #
             feature_row = {
                 "edge_capacity": base_cap,
                 "road_type_encoded": data.get(

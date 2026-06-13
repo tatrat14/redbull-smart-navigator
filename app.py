@@ -22,7 +22,6 @@ import ml_model
 from alert_system import AlertSystem, RESPONSE_OPTIONS
 from traffic_simulator import TrafficSimulator
 
-# City-centre districts used as the focus of holiday/event traffic.
 EVENT_DISTRICTS = [
     "Bayterek Tower (centre)",
     "Khan Shatyr",
@@ -66,10 +65,9 @@ def route_streets(G, route):
             seq.append(nm)
     return seq
 
-# Optional/heavy imports guarded with friendly messages.
 try:
     from streamlit_folium import st_folium
-except Exception as exc:  # pragma: no cover
+except Exception as exc:
     st.error(
         "`streamlit-folium` is required. Install dependencies with "
         "`pip install -r requirements.txt`.\n\n"
@@ -83,13 +81,10 @@ import visualizer
 
 try:
     from streamlit_autorefresh import st_autorefresh
-except Exception:  # pragma: no cover - optional, only needed for live mode
+except Exception:
     st_autorefresh = None
 
 
-# --------------------------------------------------------------------------- #
-# Page config
-# --------------------------------------------------------------------------- #
 st.set_page_config(
     page_title="Astana AI Traffic Distribution",
     page_icon="🚦",
@@ -97,9 +92,6 @@ st.set_page_config(
 )
 
 
-# --------------------------------------------------------------------------- #
-# Cached heavy resources (graph + model)
-# --------------------------------------------------------------------------- #
 @st.cache_resource(show_spinner=False)
 def get_graph():
     return graph_builder.load_or_build_graph()
@@ -110,9 +102,6 @@ def get_model():
     return ml_model.load_or_train_model()
 
 
-# --------------------------------------------------------------------------- #
-# Session state init
-# --------------------------------------------------------------------------- #
 def init_state():
     if "initialized" in st.session_state:
         return
@@ -136,11 +125,9 @@ def init_state():
     st.session_state.route = None
     st.session_state.route_info = ""
     st.session_state.has_simulated = False
-    # "Current user" position — who sees which alerts.
     first_district = list(config.DISTRICTS.keys())[0]
     st.session_state.user_location = config.DISTRICTS[first_district]
     st.session_state.loc_mode = "District"
-    # Persisted map view so live updates don't reset the user's pan/zoom.
     st.session_state.map_center = list(config.ASTANA_CENTER)
     st.session_state.map_zoom = config.DEFAULT_ZOOM
     st.session_state.last_tick = -1
@@ -157,9 +144,6 @@ district_nodes = st.session_state.district_nodes
 street_index = st.session_state.street_index
 
 
-# --------------------------------------------------------------------------- #
-# Sidebar controls
-# --------------------------------------------------------------------------- #
 st.sidebar.title("🚦 Controls")
 
 if st.session_state.graph_source == "synthetic":
@@ -190,7 +174,6 @@ else:
     sim_date = st.sidebar.date_input("Date", value=_now.date())
 day_of_week = sim_date.weekday()
 
-# --- Predicted demand (drives the simulation instead of a manual count) ----- #
 prediction = demand.predict_demand(sim_date, time_of_day)
 
 st.sidebar.subheader("Simulation")
@@ -291,9 +274,6 @@ st.sidebar.divider()
 reset_clicked = st.sidebar.button("♻ Reset simulation", use_container_width=True)
 
 
-# --------------------------------------------------------------------------- #
-# Live mode: auto-advance the simulation on a timer
-# --------------------------------------------------------------------------- #
 live_advanced = False
 if live_mode and st_autorefresh is not None:
     tick = st_autorefresh(interval=live_interval * 1000, key="live_tick")
@@ -302,9 +282,6 @@ if live_mode and st_autorefresh is not None:
         live_advanced = True
 
 
-# --------------------------------------------------------------------------- #
-# Handle actions
-# --------------------------------------------------------------------------- #
 if reset_clicked:
     sim.reset()
     alerts.clear()
@@ -317,8 +294,6 @@ if simulate_clicked or live_advanced:
     event_node_ids = [
         district_nodes[name] for name in EVENT_DISTRICTS if name in district_nodes
     ]
-    # On short live intervals keep each tick light so a step finishes well
-    # within the interval; with a long interval use the full predicted demand.
     step_trips = n_trips
     if live_advanced and not simulate_clicked and live_interval <= 8:
         step_trips = min(n_trips, 90)
@@ -333,13 +308,9 @@ if simulate_clicked or live_advanced:
         )
         new_alerts = alerts.detect(G, time_of_day, day_of_week)
     st.session_state.has_simulated = True
-    # Refresh the active route's edge resolution under the new state.
     if st.session_state.route is not None:
         r = st.session_state.route
         st.session_state.route = sim.route(r.origin, r.destination, r.vehicle_type)
-    # Toast only on a manual click (avoid spamming every live tick). NB: keep
-    # this an if/else statement — a bare ternary expression at module level
-    # would be picked up by Streamlit "magic" and st.write()'d.
     if simulate_clicked:
         msg = f"Step {sim.step_index}: {len(new_alerts)} new alert(s)."
         if hasattr(st, "toast"):
@@ -348,7 +319,6 @@ if simulate_clicked or live_advanced:
             st.sidebar.success(msg)
 
 if route_clicked:
-    # --- Origin: my current location or a district ---------------------- #
     if from_choice == MY_LOCATION:
         ulat, ulon = st.session_state.user_location
         origin_node = graph_builder.nearest_node(G, ulat, ulon)
@@ -357,7 +327,6 @@ if route_clicked:
         origin_node = district_nodes[from_choice]
         origin_label = from_choice
 
-    # --- Destination: fuzzy street match (offline) > geocode > district  #
     dest_node = None
     dest_label = ""
     geocode_failed = False
@@ -365,10 +334,7 @@ if route_clicked:
     interpreted_note = ""
     if typed:
         if chosen_street:
-            # Typo-tolerant offline match picked a real Astana street.
             if house_number is not None:
-                # Exact building via online geocoding; fall back to an offline
-                # interpolated point along the street if offline.
                 with st.spinner(f"Locating {chosen_street}, {house_number}…"):
                     coords = geocode_astana(f"{chosen_street} {house_number}")
                 if coords:
@@ -386,7 +352,6 @@ if route_clicked:
                     str(house_number or ""), "").strip() not in (street_norm, ""):
                 interpreted_note = f"  \n🔎 Interpreted “{typed}” as **{dest_label}**."
         else:
-            # No street match — fall back to online geocoding (needs internet).
             with st.spinner(f"Finding “{typed}” in Astana…"):
                 coords = geocode_astana(typed)
             if coords:
@@ -419,9 +384,6 @@ if route_clicked:
             st.session_state.route_info = f"⚠ {route.message or 'No route found.'}"
 
 
-# --------------------------------------------------------------------------- #
-# Header + metrics
-# --------------------------------------------------------------------------- #
 title_col, live_col = st.columns([4, 1])
 with title_col:
     st.title("🧭 Astana Smart Navigator")
@@ -436,7 +398,6 @@ with live_col:
 stats = sim.current_stats(time_of_day, day_of_week)
 summary = graph_builder.graph_summary(G)
 
-# --- Route ETA card (navigator-style) -------------------------------------- #
 _route = st.session_state.route
 if _route is not None and getattr(_route, "found", False):
     eta_min = _route.total_time / 60
@@ -456,14 +417,12 @@ if _route is not None and getattr(_route, "found", False):
                 "  \n".join(f"**{i+1}.** {nm}" for i, nm in enumerate(streets[:25]))
             )
 
-# --- Proximity: which alerts can the current user see / report on? --------- #
 user_lat, user_lon = st.session_state.user_location
 active_alerts = alerts.active_alerts()
 nearby_alerts = [
     a for a in active_alerts
     if graph_builder.haversine_km(user_lat, user_lon, a.lat, a.lon) <= visibility_radius
 ]
-# What this user actually sees (proximity), unless operator view is on.
 visible_alerts = active_alerts if operator_view else nearby_alerts
 hidden_count = 0 if operator_view else (len(active_alerts) - len(nearby_alerts))
 
@@ -487,9 +446,6 @@ if not st.session_state.has_simulated:
     )
 
 
-# --------------------------------------------------------------------------- #
-# Main layout: map + side panel
-# --------------------------------------------------------------------------- #
 map_col, panel_col = st.columns([3, 1.3], gap="medium")
 
 with map_col:
@@ -497,10 +453,9 @@ with map_col:
     if show_all_roads:
         max_edges = None
     elif live_mode:
-        max_edges = 900  # lighter map -> faster, smoother live refresh
+        max_edges = 900
     else:
         max_edges = config.MAX_RENDER_EDGES
-    # Stable centre (no feedback loop): the route origin while routing, else you.
     _r = st.session_state.route
     if _r is not None and getattr(_r, "nodes", None):
         _o = _r.nodes[0]
@@ -518,10 +473,6 @@ with map_col:
         center=view_center,
         zoom=st.session_state.map_zoom,
     )
-    # IMPORTANT: only return "last_clicked". Returning "center"/"zoom" makes
-    # st_folium fire a rerun on every tiny view change, which (with live mode)
-    # causes an endless refresh loop where the map never settles.
-    # `use_container_width` only exists on newer streamlit-folium.
     try:
         map_data = st_folium(
             fmap, use_container_width=True, height=600,
@@ -533,7 +484,6 @@ with map_col:
             returned_objects=["last_clicked"], key="astana_map",
         )
 
-    # If in "click the map" mode, a new click relocates the user.
     if st.session_state.loc_mode == "Clicking the map" and isinstance(map_data, dict):
         clicked = map_data.get("last_clicked")
         if clicked and "lat" in clicked and "lng" in clicked:
@@ -601,9 +551,6 @@ with panel_col:
         st.caption(f"Feedback points collected: {alerts.feedback_count()}")
 
 
-# --------------------------------------------------------------------------- #
-# Traffic flow chart over time
-# --------------------------------------------------------------------------- #
 st.subheader("📈 Traffic flow over time")
 if sim.history:
     steps = [h["step"] for h in sim.history]
@@ -635,9 +582,6 @@ else:
     st.caption("Run at least one simulation step to populate the chart.")
 
 
-# --------------------------------------------------------------------------- #
-# Model / system details
-# --------------------------------------------------------------------------- #
 with st.expander("ℹ️ Model & system details"):
     m = model.train_metrics or {}
     st.markdown(

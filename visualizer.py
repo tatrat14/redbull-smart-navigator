@@ -60,7 +60,7 @@ def _select_render_edges(G, max_edges: Optional[int], must_include: set):
     rest = [e for e in edges if (e[0], e[1], e[2]) not in must_include]
     rest.sort(
         key=lambda e: e[3].get("road_type_encoded", 0)
-        + e[3].get("load", 0.0),  # nudge busy roads into view
+        + e[3].get("load", 0.0),
         reverse=True,
     )
     budget = max(0, max_edges - len(forced))
@@ -114,7 +114,6 @@ def build_map(
         ).add_to(roads_layer)
     roads_layer.add_to(fmap)
 
-    # --- Highlighted route ------------------------------------------------ #
     if route and getattr(route, "found", False):
         route_layer = folium.FeatureGroup(name="Vehicle route", show=True)
         for u, v, k in route.edges:
@@ -140,7 +139,6 @@ def build_map(
             ).add_to(route_layer)
         route_layer.add_to(fmap)
 
-    # --- District markers ------------------------------------------------- #
     if district_node_ids:
         dlayer = folium.FeatureGroup(name="Districts", show=True)
         for name, node_id in district_node_ids.items():
@@ -155,7 +153,6 @@ def build_map(
                 ).add_to(dlayer)
         dlayer.add_to(fmap)
 
-    # --- Active alert markers --------------------------------------------- #
     active = [a for a in alerts if a.status == "active"]
     if active:
         alayer = folium.FeatureGroup(name="Active alerts", show=True)
@@ -181,7 +178,6 @@ def build_map(
             ).add_to(alayer)
         alayer.add_to(fmap)
 
-    # --- "You are here" + visibility radius -------------------------------- #
     if user_location is not None:
         ulat, ulon = user_location
         ulayer = folium.FeatureGroup(name="You", show=True)

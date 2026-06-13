@@ -27,13 +27,10 @@ import config
 
 try:
     import joblib
-except Exception:  # pragma: no cover - joblib ships with scikit-learn
+except Exception:
     joblib = None
 
 
-# --------------------------------------------------------------------------- #
-# Latent "ground truth" used to generate training labels
-# --------------------------------------------------------------------------- #
 def time_of_day_factor(t):
     """
     Smooth 0..1 demand factor across the day with morning (~08:00) and evening
@@ -74,9 +71,6 @@ def latent_congestion_probability(capacity, road_type_encoded, tod, dow, load):
     return _sigmoid(z)
 
 
-# --------------------------------------------------------------------------- #
-# Synthetic training data
-# --------------------------------------------------------------------------- #
 def generate_synthetic_training_data(n_samples: int = 9000, seed: int = 42) -> pd.DataFrame:
     """Generate a labelled training set covering all times of day / week."""
     rng = np.random.default_rng(seed)
@@ -85,7 +79,6 @@ def generate_synthetic_training_data(n_samples: int = 9000, seed: int = 42) -> p
     road_type_encoded = rng.integers(0, config.MAX_ROAD_TYPE_CODE + 1, n_samples)
     time_of_day = rng.integers(0, 24, n_samples)
     day_of_week = rng.integers(0, 7, n_samples)
-    # Beta distribution -> more mass at mid loads, realistic spread.
     current_load = rng.beta(2.0, 2.5, n_samples)
 
     p = latent_congestion_probability(
@@ -105,22 +98,17 @@ def generate_synthetic_training_data(n_samples: int = 9000, seed: int = 42) -> p
     )
 
 
-# --------------------------------------------------------------------------- #
-# Model wrapper
-# --------------------------------------------------------------------------- #
 class CongestionModel:
     """Thin wrapper around a scikit-learn classifier with save/load helpers."""
 
     def __init__(self, model=None, feedback: Optional[pd.DataFrame] = None):
         self.model = model
         self.feature_columns = list(config.FEATURE_COLUMNS)
-        # Accumulated, user-labelled feedback rows (same columns as training).
         self.feedback = feedback if feedback is not None else pd.DataFrame(
             columns=self.feature_columns + ["congested"]
         )
         self.train_metrics: dict = {}
 
-    # -- training -------------------------------------------------------- #
     def fit(self, df: Optional[pd.DataFrame] = None, n_samples: int = 9000):
         from sklearn.ensemble import RandomForestClassifier
         from sklearn.model_selection import train_test_split
@@ -136,7 +124,6 @@ class CongestionModel:
                 X, y, test_size=0.2, random_state=42, stratify=y
             )
         except ValueError:
-            # Degenerate label distribution; split without stratification.
             X_tr, X_te, y_tr, y_te = train_test_split(
                 X, y, test_size=0.2, random_state=42
             )
@@ -157,7 +144,6 @@ class CongestionModel:
         }
         return self
 
-    # -- inference ------------------------------------------------------- #
     def predict_proba(self, features: pd.DataFrame) -> np.ndarray:
         """Return P(congested) for each row of a feature DataFrame/array."""
         if self.model is None:
@@ -170,11 +156,9 @@ class CongestionModel:
         if X.size == 0:
             return np.zeros(0)
         proba = self.model.predict_proba(X)
-        # Probability of the positive ("congested") class.
         classes = list(self.model.classes_)
         if 1 in classes:
             return proba[:, classes.index(1)]
-        # Degenerate single-class model.
         return np.full(len(X), float(classes[0]))
 
     def predict_for_graph(self, G, time_of_day: int, day_of_week: int) -> dict:
@@ -206,13 +190,11 @@ class CongestionModel:
             G.edges[u, v, k]["congestion_prob"] = float(p)
         return result
 
-    # -- feedback / online update --------------------------------------- #
     def add_feedback(self, feature_row: dict, congested: int):
         """Append one user-labelled data point (from an alert response)."""
         row = {col: feature_row.get(col) for col in self.feature_columns}
         row["congested"] = int(congested)
         new_row = pd.DataFrame([row])
-        # Avoid concatenating onto an all-empty frame (pandas FutureWarning).
         self.feedback = (
             new_row
             if self.feedback.empty
@@ -223,14 +205,12 @@ class CongestionModel:
         """Retrain on synthetic data augmented with collected feedback rows."""
         base = generate_synthetic_training_data(n_samples=n_samples)
         if not self.feedback.empty:
-            # Up-weight feedback by duplicating it so it actually moves the model.
             weighted = pd.concat([self.feedback] * 25, ignore_index=True)
             combined = pd.concat([base, weighted], ignore_index=True)
         else:
             combined = base
         return self.fit(combined)
 
-    # -- persistence ----------------------------------------------------- #
     def save(self, path: str = config.MODEL_CACHE_PATH):
         if joblib is None:
             return

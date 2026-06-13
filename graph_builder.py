@@ -34,9 +34,6 @@ import networkx as nx
 import config
 
 
-# --------------------------------------------------------------------------- #
-# OSM attribute parsing helpers
-# --------------------------------------------------------------------------- #
 def _first(value):
     """OSM attributes are often lists; collapse to a single representative."""
     if isinstance(value, (list, tuple)):
@@ -70,7 +67,6 @@ def parse_maxspeed(value) -> Optional[float]:
     if raw is None:
         return None
     text = str(raw).strip().lower()
-    # Handle "30 mph", "50 km/h", "50".
     try:
         if "mph" in text:
             num = float(text.replace("mph", "").strip())
@@ -89,13 +85,9 @@ def normalise_road_type(value) -> str:
     text = str(raw).strip().lower()
     if text in config.ROAD_TYPE_CAPACITY:
         return text
-    # Unknown highway value -> treat as unclassified.
     return "unclassified"
 
 
-# --------------------------------------------------------------------------- #
-# Capacity scoring
-# --------------------------------------------------------------------------- #
 def compute_capacity(road_type: str, lanes: float, speed_kph: float) -> float:
     """Weighted capacity score in [CAPACITY_MIN, CAPACITY_MAX]."""
     base = config.ROAD_TYPE_CAPACITY.get(road_type, config.DEFAULT_ROAD_CAPACITY)
@@ -118,7 +110,6 @@ def annotate_edges(G: nx.MultiDiGraph) -> nx.MultiDiGraph:
         road_type = normalise_road_type(data.get("highway"))
         lanes = parse_lanes(data.get("lanes"), road_type)
 
-        # Prefer an explicit/ imputed speed; else parse maxspeed; else default.
         speed = data.get("speed_kph")
         try:
             speed = float(speed) if speed is not None else None
@@ -127,7 +118,6 @@ def annotate_edges(G: nx.MultiDiGraph) -> nx.MultiDiGraph:
         if speed is None or speed <= 0:
             speed = parse_maxspeed(data.get("maxspeed"))
         if speed is None or speed <= 0:
-            # Default speed by road type (km/h).
             speed = {
                 "motorway": 100,
                 "motorway_link": 60,
@@ -148,14 +138,12 @@ def annotate_edges(G: nx.MultiDiGraph) -> nx.MultiDiGraph:
         try:
             length = float(length)
         except (ValueError, TypeError):
-            # Estimate from node coordinates if missing.
             length = _haversine_m(
                 G.nodes[u]["y"], G.nodes[u]["x"],
                 G.nodes[v]["y"], G.nodes[v]["x"],
             )
 
         capacity = compute_capacity(road_type, lanes, speed)
-        # Free-flow travel time in seconds.
         free_flow_time = length / max(speed * 1000.0 / 3600.0, 1.0)
 
         data["road_type"] = road_type
@@ -166,13 +154,11 @@ def annotate_edges(G: nx.MultiDiGraph) -> nx.MultiDiGraph:
         data["speed_kph"] = float(speed)
         data["length_m"] = float(length)
         data["capacity"] = float(capacity)
-        data["base_capacity"] = float(capacity)  # original, before incidents
+        data["base_capacity"] = float(capacity)
         data["free_flow_time"] = float(free_flow_time)
-        # Vehicle capacity (for volume -> load conversion).
         data["veh_capacity"] = float(
             config.EDGE_BASE_VEHICLE_CAPACITY * lanes * (0.4 + 0.6 * capacity)
         )
-        # Runtime state (reset to neutral).
         data.setdefault("load", 0.0)
         data.setdefault("predicted_load", 0.0)
         data.setdefault("congestion_prob", 0.0)
@@ -195,11 +181,6 @@ def haversine_km(lat1, lon1, lat2, lon2) -> float:
     return _haversine_m(lat1, lon1, lat2, lon2) / 1000.0
 
 
-# --------------------------------------------------------------------------- #
-# OSMnx build / cache
-# --------------------------------------------------------------------------- #
-# GraphML stores everything as strings; tell OSMnx how to coerce our custom
-# numeric attributes back on load.
 _EDGE_DTYPES = {
     "capacity": float,
     "base_capacity": float,
@@ -217,9 +198,8 @@ _EDGE_DTYPES = {
 
 
 def _download_graph():
-    import osmnx as ox  # imported lazily so synthetic path needs no OSMnx
+    import osmnx as ox
 
-    # Reasonable defaults; OSMnx 1.9.x API.
     if config.NETWORK_MODE == "point":
         G = ox.graph_from_point(
             config.ASTANA_CENTER,
@@ -229,19 +209,15 @@ def _download_graph():
     else:
         G = ox.graph_from_place(config.PLACE_NAME, network_type=config.NETWORK_TYPE)
 
-    # Impute speeds and travel times where OSM lacks them.
     try:
         G = ox.add_edge_speeds(G)
         G = ox.add_edge_travel_times(G)
     except Exception:
-        # Older/newer OSMnx may namespace these differently; non-fatal.
         pass
 
-    # Keep the largest strongly-connected component so routing always succeeds.
     try:
         G = ox.truncate.largest_component(G, strongly=True)
     except Exception:
-        # Fallback for API differences.
         largest = max(nx.strongly_connected_components(G), key=len)
         G = G.subgraph(largest).copy()
 
@@ -264,7 +240,6 @@ def load_or_build_graph(
     Returns (graph, source) where source is one of
     {"cache", "osm", "synthetic"}.
     """
-    # 1. Try cache.
     if not force_rebuild and os.path.exists(cache_path):
         try:
             import osmnx as ox
@@ -272,19 +247,15 @@ def load_or_build_graph(
             G = ox.load_graphml(cache_path, edge_dtypes=_EDGE_DTYPES)
             G = annotate_edges(G)
             return G, "cache"
-        except Exception as exc:  # corrupt cache or OSMnx missing
+        except Exception as exc:
             print(f"[graph_builder] Could not load cache ({exc}); rebuilding.")
 
-    # 2. Try OSM download.
     try:
         import osmnx as ox
 
         G = _download_graph()
         G = annotate_edges(G)
         try:
-            # NOTE: ox.save_graphml stringifies attributes in place, so save a
-            # copy — otherwise the returned graph's numeric edge attributes
-            # (load, capacity, ...) and shapely geometry would be clobbered.
             ox.save_graphml(G.copy(), cache_path)
         except Exception as exc:
             print(f"[graph_builder] Warning: failed to cache graph ({exc}).")
@@ -294,15 +265,11 @@ def load_or_build_graph(
         if not allow_synthetic_fallback:
             raise
 
-    # 3. Synthetic fallback.
     print("[graph_builder] Falling back to synthetic grid graph.")
     G = build_synthetic_graph()
     return G, "synthetic"
 
 
-# --------------------------------------------------------------------------- #
-# Synthetic fallback graph
-# --------------------------------------------------------------------------- #
 def build_synthetic_graph(rows: int = 22, cols: int = 22) -> nx.MultiDiGraph:
     """
     Build a grid road network roughly covering Astana so the full pipeline can
@@ -312,7 +279,6 @@ def build_synthetic_graph(rows: int = 22, cols: int = 22) -> nx.MultiDiGraph:
     G.graph["crs"] = "epsg:4326"
 
     lat0, lon0 = config.ASTANA_CENTER
-    # ~0.13 deg lat (~14 km) and ~0.20 deg lon span.
     lat_span, lon_span = 0.13, 0.20
     lat_step = lat_span / (rows - 1)
     lon_step = lon_span / (cols - 1)
@@ -326,7 +292,6 @@ def build_synthetic_graph(rows: int = 22, cols: int = 22) -> nx.MultiDiGraph:
             lon = lon0 - lon_span / 2 + c * lon_step
             G.add_node(node_id(r, c), x=lon, y=lat)
 
-    # Designate some rows/cols as arterials (bigger roads).
     def classify(r, c, horizontal):
         idx = r if horizontal else c
         if idx % 7 == 0:
@@ -340,7 +305,6 @@ def build_synthetic_graph(rows: int = 22, cols: int = 22) -> nx.MultiDiGraph:
         lat_b, lon_b = G.nodes[b]["y"], G.nodes[b]["x"]
         length = _haversine_m(lat_a, lon_a, lat_b, lon_b)
         lanes = config.DEFAULT_LANES.get(road_type, 1)
-        # Add both directions (MultiDiGraph) so routing works either way.
         for s, t in ((a, b), (b, a)):
             G.add_edge(
                 s, t, 0,
@@ -363,9 +327,6 @@ def build_synthetic_graph(rows: int = 22, cols: int = 22) -> nx.MultiDiGraph:
     return annotate_edges(G)
 
 
-# --------------------------------------------------------------------------- #
-# Node lookup
-# --------------------------------------------------------------------------- #
 def nearest_node(G, lat: float, lon: float):
     """Nearest graph node to a (lat, lon) point. Uses OSMnx if available."""
     try:
@@ -373,7 +334,6 @@ def nearest_node(G, lat: float, lon: float):
 
         return ox.distance.nearest_nodes(G, X=lon, Y=lat)
     except Exception:
-        # Pure-python fallback (fine for the synthetic grid / small graphs).
         best_node, best_d = None, float("inf")
         for n, data in G.nodes(data=True):
             d = (data["y"] - lat) ** 2 + (data["x"] - lon) ** 2
@@ -397,23 +357,15 @@ def graph_summary(G) -> dict:
     }
 
 
-# --------------------------------------------------------------------------- #
-# Offline fuzzy street search (typo-tolerant)
-# --------------------------------------------------------------------------- #
-# Transliterate Cyrillic (Russian + Kazakh) to a common Latin form so that a
-# query in any script — "Мәңгілік Ел", "мангилик ел", "mangilik el" — collapses
-# to the same normalised string.
 _CYR2LAT = {
     "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
     "ж": "zh", "з": "z", "и": "i", "й": "i", "к": "k", "л": "l", "м": "m",
     "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
     "ф": "f", "х": "h", "ц": "c", "ч": "ch", "ш": "sh", "щ": "sch", "ъ": "",
     "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
-    # Kazakh-specific letters
     "ә": "a", "ғ": "g", "қ": "k", "ң": "n", "ө": "o", "ұ": "u", "ү": "u",
     "һ": "h", "і": "i",
 }
-# Road-type words (any script) to strip so "проспект Абая" matches "Абая".
 _ROAD_WORDS = [
     "көшесі", "даңғылы", "даңғыл", "проспект", "переулок", "микрорайон",
     "шоссе", "проезд", "тұйығы", "алаңы", "улица", "мкр", "пр-т", "пр.",
@@ -465,15 +417,12 @@ def build_street_index(G) -> dict:
         clat, clon = acc[0] / acc[2], acc[1] / acc[2]
         name_to_centroid[name] = (clat, clon)
         pts = [(n, G.nodes[n]["x"], G.nodes[n]["y"]) for n in nodes]
-        # representative node = the street's node closest to its centroid
         best, best_d = None, float("inf")
         for n, x, y in pts:
             d = (y - clat) ** 2 + (x - clon) ** 2
             if d < best_d:
                 best_d, best = d, n
         name_to_node[name] = best
-        # Order nodes along the street's dominant axis so a house number can be
-        # interpolated to a distinct point (not collapsed to one centroid).
         xs = [p[1] for p in pts]
         ys = [p[2] for p in pts]
         if (max(xs) - min(xs)) >= (max(ys) - min(ys)):
@@ -495,8 +444,6 @@ def build_street_index(G) -> dict:
     }
 
 
-# Approximate top of the house-number range used to spread a number along a
-# street when we have no building data (offline interpolation).
 HOUSE_NUMBER_CAP = 150.0
 
 
@@ -512,7 +459,7 @@ def parse_address(text: str):
     street = text
     m = re.search(r"(?:дом|д\.?|house|#|кв|оф)\s*(\d{1,4})", text, re.I)
     if not m:
-        m = re.search(r"(\d{1,4})\s*$", text)  # trailing number
+        m = re.search(r"(\d{1,4})\s*$", text)
     if m:
         num = int(m.group(1))
         street = (text[: m.start()] + text[m.end():]).strip(" ,.-")
@@ -545,7 +492,6 @@ def match_street(query: str, index: dict, limit: int = 5):
 
     def _consider(key, base=0.0):
         score = difflib.SequenceMatcher(None, qn, key).ratio()
-        # token overlap bonus (helps multi-word names with a typo in one token)
         qt, kt = set(qn.split()), set(key.split())
         if qt and kt:
             score = 0.7 * score + 0.3 * (len(qt & kt) / len(qt | kt))
@@ -558,7 +504,6 @@ def match_street(query: str, index: dict, limit: int = 5):
         _consider(qn, base=1.0)
     for key in difflib.get_close_matches(qn, norm_keys, n=limit * 3, cutoff=0.5):
         _consider(key)
-    # also catch substring matches (e.g. "abay" inside a longer official name)
     for key in norm_keys:
         if qn in key or key in qn:
             _consider(key, base=0.82)

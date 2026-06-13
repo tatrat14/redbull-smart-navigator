@@ -57,14 +57,9 @@ class TrafficSimulator:
         self.rng = random.Random(seed)
         self.np_rng = np.random.default_rng(seed)
         self.step_index = 0
-        # Time-series history for charting.
         self.history: List[dict] = []
-        # Cache node list for trip sampling.
         self._nodes = list(G.nodes())
 
-    # ------------------------------------------------------------------ #
-    # Baseline (predicted) load
-    # ------------------------------------------------------------------ #
     def _baseline_load(self, data: dict, tod: int, dow: int) -> float:
         tod_f = float(time_of_day_factor(tod))
         importance = data.get("road_type_encoded", 0) / float(config.MAX_ROAD_TYPE_CODE)
@@ -76,9 +71,6 @@ class TrafficSimulator:
         )
         return float(min(0.92, max(0.03, base)))
 
-    # ------------------------------------------------------------------ #
-    # Routing
-    # ------------------------------------------------------------------ #
     def _single_edge_cost(self, data: dict, vehicle_type: str) -> Optional[float]:
         """Cost of traversing one edge for a given vehicle type, or None if
         the edge is not usable by that vehicle.
@@ -94,23 +86,14 @@ class TrafficSimulator:
         cong = data.get("congestion_prob", 0.0)
         cap = data.get("capacity", 0.3)
         incident_factor = data.get("incident_factor", 1.0)
-        # BPR-style delay, sensitive already at moderate load (exponent 2).
         bpr = 1.0 + 0.9 * (load ** 2)
 
         if vehicle_type == config.VEHICLE_EMERGENCY:
-            # Absolute priority ("green wave"): fastest free-flow path. Ignores
-            # congestion, road class AND incidents (can use oncoming lanes /
-            # closed roads), so it drives straight through jams and accidents.
             return t0
 
         if vehicle_type == config.VEHICLE_HEAVY:
             road_type = data.get("road_type", "residential")
             lanes = data.get("lanes_num", 1)
-            # Soft constraint: a truck CAN dip onto a small street for an
-            # unavoidable connector (last mile), but pays a steep penalty, so it
-            # sticks to wide avenues. This keeps the network connected (no dead
-            # ends / fallbacks) while still producing an arterial-hugging route
-            # that is genuinely different from the car/ambulance path.
             penalty = 1.0
             if road_type not in config.HEAVY_ALLOWED_ROAD_TYPES:
                 penalty *= 6.0
@@ -119,8 +102,6 @@ class TrafficSimulator:
             class_pref = 1.0 + 1.3 * (1.0 - cap)
             return t0 * penalty * class_pref * (1.0 + 0.4 * load) * incident_factor
 
-        # Regular: congestion-aware load-balancing. Strong congestion surcharge
-        # so realistic loads actively push it onto alternative roads.
         return t0 * bpr * (1.0 + 1.6 * cong) * incident_factor
 
     def _weight_function(self, vehicle_type: str) -> Callable:
@@ -134,7 +115,7 @@ class TrafficSimulator:
                     continue
                 if best is None or c < best:
                     best = c
-            return best  # None -> edge not traversable
+            return best
 
         return weight
 
@@ -152,7 +133,6 @@ class TrafficSimulator:
                 if c < best_cost:
                     best_cost, best_key, best_data = c, k, data
             if best_key is None:
-                # Fallback: take any edge so we can still report something.
                 k = next(iter(self.G[u][v]))
                 best_key, best_data = k, self.G[u][v][k]
                 best_cost = best_data.get("free_flow_time", 1.0)
@@ -185,8 +165,6 @@ class TrafficSimulator:
             )
             result.found = True
         except nx.NetworkXNoPath:
-            # Heavy vehicles may have no arterial-only path: fall back to a
-            # regular route so the demo still shows something.
             if vehicle_type == config.VEHICLE_HEAVY:
                 fallback = self.route(origin, destination, config.VEHICLE_REGULAR)
                 fallback.vehicle_type = vehicle_type
@@ -200,9 +178,6 @@ class TrafficSimulator:
             result.message = "Origin or destination node not in graph."
         return result
 
-    # ------------------------------------------------------------------ #
-    # Simulation step
-    # ------------------------------------------------------------------ #
     def _regular_cost(self, data: dict) -> float:
         """Scalar congestion-aware cost of an edge for regular vehicles. Stored
         on the edge as ``reg_cost`` so trip assignment can use fast string-keyed
@@ -211,7 +186,6 @@ class TrafficSimulator:
         load = data.get("load", 0.0)
         cong = data.get("congestion_prob", 0.0)
         incident_factor = data.get("incident_factor", 1.0)
-        # Mirror the REGULAR routing cost so assignment and routing agree.
         return t0 * (1.0 + 0.9 * (load ** 2)) * (1.0 + 1.6 * cong) * incident_factor
 
     def _assign_trips(self, n_trips: int, district_node_ids: List[int],
@@ -229,18 +203,14 @@ class TrafficSimulator:
         anchors = district_node_ids or self._nodes
         event_nodes = event_nodes or []
 
-        # Seed a scalar cost on every edge for fast Dijkstra.
         for _, _, data in self.G.edges(data=True):
             data["reg_cost"] = self._regular_cost(data)
 
         for _ in range(n_trips):
-            # Bias trips toward district centres (realistic OD demand) but keep
-            # some fully-random trips for spread.
             if anchors and self.rng.random() < 0.6:
                 origin = self.rng.choice(anchors)
             else:
                 origin = self.rng.choice(self._nodes)
-            # On event days, pull a share of destinations into the centre.
             if event_nodes and self.rng.random() < event_focus:
                 dest = self.rng.choice(event_nodes)
             elif anchors and self.rng.random() < 0.6:
@@ -257,7 +227,6 @@ class TrafficSimulator:
                 continue
 
             for u, v in zip(nodes[:-1], nodes[1:]):
-                # Pick the cheapest parallel edge and add a unit of volume.
                 best_key, best_cost = None, float("inf")
                 for k, data in self.G[u][v].items():
                     c = data.get("reg_cost", float("inf"))
@@ -268,7 +237,7 @@ class TrafficSimulator:
                 data = self.G[u][v][best_key]
                 inc = 1.0 / max(data.get("veh_capacity", 30.0), 5.0)
                 data["load"] = float(min(1.0, data.get("load", 0.0) + inc))
-                data["reg_cost"] = self._regular_cost(data)  # keep cost current
+                data["reg_cost"] = self._regular_cost(data)
 
     def _inject_anomalies(self, n_edges: int) -> List[EdgeKey]:
         """Spike a few capable edges above their predicted load to create
@@ -286,9 +255,8 @@ class TrafficSimulator:
         spiked = []
         for u, v, k in chosen:
             data = self.G.edges[u, v, k]
-            spike = self.rng.uniform(1.55, 2.4)  # comfortably above ANOMALY_RATIO
+            spike = self.rng.uniform(1.55, 2.4)
             spiked_load = data.get("predicted_load", 0.2) * spike
-            # Only ever raise the load (never undo trip-assigned congestion).
             data["load"] = float(min(1.0, max(data.get("load", 0.0), spiked_load)))
             spiked.append((u, v, k))
         return spiked
@@ -306,24 +274,19 @@ class TrafficSimulator:
         """Advance the simulation by one time-step and return a summary dict."""
         self.step_index += 1
 
-        # 1. Baseline predicted load + reset actual load to baseline + noise.
         for u, v, k, data in self.G.edges(keys=True, data=True):
             baseline = self._baseline_load(data, time_of_day, day_of_week)
             data["predicted_load"] = baseline
             noise = float(self.np_rng.normal(0, 0.04))
             data["load"] = float(min(1.0, max(0.0, baseline + noise)))
 
-        # 2. Congestion-aware trip assignment (the load-balancing core).
         self._assign_trips(n_trips, district_node_ids or [],
                            event_focus=event_focus, event_nodes=event_node_ids)
 
-        # 3. Inject anomalies for the alert system.
         spiked = self._inject_anomalies(anomaly_edges)
 
-        # 4. ML congestion probability per edge (writes congestion_prob).
         self.model.predict_for_graph(self.G, time_of_day, day_of_week)
 
-        # 5. Aggregate statistics + history.
         stats = self.current_stats(time_of_day, day_of_week)
         stats["anomaly_edges"] = spiked
         self.history.append(
@@ -339,9 +302,6 @@ class TrafficSimulator:
         )
         return stats
 
-    # ------------------------------------------------------------------ #
-    # Stats
-    # ------------------------------------------------------------------ #
     def current_stats(self, time_of_day: int, day_of_week: int) -> dict:
         loads = np.array(
             [d.get("load", 0.0) for _, _, d in self.G.edges(data=True)]

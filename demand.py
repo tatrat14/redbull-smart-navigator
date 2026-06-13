@@ -15,7 +15,6 @@ from typing import List, Optional
 
 from ml_model import time_of_day_factor
 
-# Kazakhstan public holidays, keyed by (month, day). Fixed-date national days.
 KZ_HOLIDAYS = {
     (1, 1): "New Year",
     (1, 2): "New Year holiday",
@@ -32,10 +31,8 @@ KZ_HOLIDAYS = {
     (10, 25): "Republic Day",
     (12, 16): "Independence Day",
 }
-# Holidays with big public events concentrated in the city centre.
 BIG_EVENT_HOLIDAYS = {"Nauryz Meyramy", "Capital Day (Astana)"}
 
-# Baseline vehicles per simulation step at an average moment.
 BASE_TRIPS = 170
 MIN_TRIPS, MAX_TRIPS = 30, 420
 
@@ -51,7 +48,6 @@ class DemandPrediction:
     reasons: List[str] = field(default_factory=list)
     holiday: Optional[str] = None
     big_event: bool = False
-    # How strongly to concentrate trips on the city centre (events).
     event_focus: float = 0.0
 
     @property
@@ -72,7 +68,6 @@ def predict_demand(d: date, hour: int, base: int = BASE_TRIPS) -> DemandPredicti
     holiday = get_holiday(d)
     reasons: List[str] = []
 
-    # Base shape: light overnight, peaks at ~08:00 and ~18:00.
     factor = 0.45 + 0.95 * tod
     if 7 <= hour <= 9:
         reasons.append("morning rush hour")
@@ -88,10 +83,8 @@ def predict_demand(d: date, hour: int, base: int = BASE_TRIPS) -> DemandPredicti
     event_focus = 0.0
     big_event = False
     if holiday:
-        # Commuters stay home, so the rush-hour spike flattens...
         factor *= 0.75
         reasons.append(f"public holiday: {holiday}")
-        # ...but daytime/evening leisure & event traffic rises.
         if 11 <= hour <= 22:
             factor *= 1.5
             reasons.append("holiday daytime/evening activity")
@@ -102,7 +95,6 @@ def predict_demand(d: date, hour: int, base: int = BASE_TRIPS) -> DemandPredicti
             event_focus = 0.7
             reasons.append("major city-centre celebrations")
     else:
-        # Pre-holiday evening getaway (day before a public holiday).
         tomorrow = d + timedelta(days=1)
         if get_holiday(tomorrow) and hour >= 16:
             factor *= 1.25
