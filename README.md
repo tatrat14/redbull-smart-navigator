@@ -123,6 +123,8 @@ astana_traffic/
 ├── traffic_simulator.py   # Traffic distribution + vehicle routing
 ├── alert_system.py        # Anomaly detection + alert/feedback loop
 ├── visualizer.py          # Folium map rendering
+├── run.bat                # One-click launcher (Windows)
+├── run.sh                 # One-click launcher (macOS / Linux)
 ├── data/
 │   ├── astana_graph.graphml     # (created on first run)
 │   └── congestion_model.joblib  # (created on first run)
@@ -137,11 +139,25 @@ astana_traffic/
 > Requires **Python 3.10+**. The first run needs **internet** to download the
 > road network; every run afterwards works **fully offline**.
 
+### ⚡ One-click launch (easiest)
+After downloading the project, just run the launcher — it creates the
+environment, installs everything and starts the app automatically:
+
+- **Windows:** double-click **`run.bat`**
+- **macOS / Linux:** `./run.sh` (run `chmod +x run.sh` once if needed)
+
+The first launch takes a few minutes (downloading packages + the Astana map);
+after that it starts in seconds. To stop the app, close the window or press
+`Ctrl+C`. *(You still need Python 3.10+ installed first.)*
+
+Prefer to do it by hand? Follow the manual steps below.
+
 ### 0. Get the code
 ```bash
 git clone https://github.com/tatrat14/redbull-smart-navigator.git
 cd redbull-smart-navigator
 ```
+Or download the ZIP from GitHub (green **Code ▾ → Download ZIP**) and unzip it.
 
 ### 1. Create a virtual environment
 
