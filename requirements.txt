@@ -1,0 +1,24 @@
+# Astana AI Traffic Distribution — pinned dependencies (Python 3.10+)
+#
+# These versions are mutually compatible and tested together. If you hit a
+# geopandas/OSMnx install problem on Windows, see the README for the conda
+# install path.
+
+numpy==1.26.4
+pandas==2.2.2
+scipy==1.13.1
+scikit-learn==1.5.1
+
+networkx==3.3
+osmnx==1.9.4
+geopandas==0.14.4
+shapely==2.0.5
+requests==2.32.3
+
+folium==0.17.0
+streamlit==1.37.1
+streamlit-folium==0.22.0
+streamlit-autorefresh==1.0.1
+plotly==5.23.0
+
+joblib==1.4.2

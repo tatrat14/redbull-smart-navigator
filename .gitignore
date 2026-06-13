@@ -1,0 +1,32 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.Python
+build/
+dist/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Generated runtime artifacts (regenerated automatically on first run) ---
+# Cached Astana road graph (downloaded from OpenStreetMap on first run)
+data/*.graphml
+# Trained congestion model
+data/*.joblib
+# OSMnx HTTP cache
+cache/
+
+# --- Streamlit ---
+.streamlit/secrets.toml
+
+# --- Editors / OS ---
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

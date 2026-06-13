@@ -1,0 +1,4 @@
+# This folder holds cached artifacts created at runtime:
+#   astana_graph.graphml      - cached Astana road network (after first download)
+#   congestion_model.joblib   - trained congestion-prediction model
+# Both are regenerated automatically if missing.
